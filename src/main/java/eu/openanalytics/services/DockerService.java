@@ -492,6 +492,40 @@ public class DockerService {
                 String k8sCpuRequest = Optional.ofNullable(app.getKubernetesCpuRequest()).orElse("500m");
                 String k8sCpuLimit = Optional.ofNullable(app.getKubernetesCpuLimit()).orElse("1");
 
+                String[] k8sSecrets = Optional.ofNullable(app.getKubernetesSecrets()).orElse(new String[]{});
+                if (k8sSecrets.length > 0) {
+                    Volume[] oldVolumes = volumes;
+                    VolumeMount[] oldVolumeMounts = volumeMounts;
+
+                    volumes = new Volume[dockerVolumeStrs.length + k8sSecrets.length];
+                    volumeMounts = new VolumeMount[dockerVolumeStrs.length + k8sSecrets.length];
+                    System.arraycopy(oldVolumes, 0, volumes, 0, dockerVolumeStrs.length);
+                    System.arraycopy(oldVolumeMounts, 0, volumeMounts, 0, dockerVolumeStrs.length);
+
+                    String k8sSecretMount = Optional.ofNullable(app.getKubernetesSecretMountRoot()).orElse("/secrets");
+
+                    for (int ii = 0; ii < k8sSecrets.length; ii++) {
+                        SecretVolumeSource source = new SecretVolumeSourceBuilder()
+                                .withSecretName(k8sSecrets[ii])
+                                .build();
+
+                        String volName = "secret-" + k8sSecrets[ii];
+
+                        Volume volume = new VolumeBuilder()
+                                .withName(volName)
+                                .withSecret(source)
+                                .build();
+
+                        VolumeMount mount = new VolumeMountBuilder()
+                                .withMountPath(Paths.get(k8sSecretMount, k8sSecrets[ii]).toString())
+                                .withName(volName)
+                                .build();
+
+                        volumes[dockerVolumeStrs.length + ii] = volume;
+                        volumeMounts[dockerVolumeStrs.length + ii] = mount;
+                    }
+                }
+
                 ContainerBuilder containerBuilder = new ContainerBuilder()
                         .withImage(app.getDockerImage())
                         .withName("shiny-container")
@@ -502,6 +536,7 @@ public class DockerService {
                         .addToRequests("cpu", new Quantity(k8sCpuRequest))
                         .addToRequests("memory", new Quantity(k8sMemoryRequest))
                         .endResources()
+                        .withVolumeMounts(volumeMounts)
                         .withEnv(envVars);
 
                 String imagePullPolicy = environment.getProperty("shiny.proxy.docker.kubernetes-image-pull-policy", app.getKubernetesImagePullPolicy());
